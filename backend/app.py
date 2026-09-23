@@ -15,6 +15,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+from backend.hybrid import HybridRetriever, RetrievalUnavailable
 
 DISCLAIMER = '학습용 법률 정보 검색이며 법률 자문이 아닙니다. 적용 법령·시행일을 원문에서 확인하고 전문가에게 상담하세요.'
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,9 +63,10 @@ class Question(BaseModel):
 
 
 class Engine:
-    def __init__(self, documents, db_path, api_key='', embeddings=False, gpt=False):
+    def __init__(self, documents, db_path, api_key='', embeddings=False, gpt=False, retriever=None):
         self.docs = [Document.model_validate(d).model_dump() for d in documents]
-        if not self.docs or len({d['id'] for d in self.docs}) != len(self.docs):
+        self.retriever = retriever
+        if retriever is None and (not self.docs or len({d['id'] for d in self.docs}) != len(self.docs)):
             raise ValueError('문서가 비어 있거나 ID가 중복되었습니다.')
         if len(self.docs) > 5000:
             raise ValueError('MVP 문서 한도는 5,000개입니다. 조항 단위로 선별하세요.')
@@ -74,7 +76,7 @@ class Engine:
             raise ValueError('OpenAI 사용 모드에는 OPENAI_API_KEY가 필요합니다.')
         self.model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
         self.counters = [Counter(tokens(d['title'] + ' ' + d['text'])) for d in self.docs]
-        self.avg = sum(map(lambda c: sum(c.values()), self.counters)) / len(self.docs)
+        self.avg = sum(sum(c.values()) for c in self.counters) / len(self.docs) if self.docs else 1
         self.df = Counter(t for c in self.counters for t in c)
         with self.db() as db:
             db.executescript('CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, expires REAL); CREATE TABLE IF NOT EXISTS turns(token TEXT, question TEXT, answer TEXT); CREATE TABLE IF NOT EXISTS vectors(cache_key TEXT PRIMARY KEY, value TEXT);')
@@ -107,6 +109,8 @@ class Engine:
         return sum(x*y for x, y in zip(a, b)) / (math.sqrt(sum(x*x for x in a)*sum(y*y for y in b)) or 1)
 
     def search(self, query):
+        if self.retriever is not None:
+            return self.retriever.search(query)
         q = Counter(tokens(query))
         bm25, dense = [], []
         qvec = self.vector(query) if self.embeddings else None
@@ -158,11 +162,25 @@ class Engine:
         followup = bool(re.match(r'^(그럼|그러면|그것|이 경우|그 경우|또는|얼마)', question))
         context = ' '.join(t['question'] for t in history[-2:]) if followup else ''
         query = (context + ' ' + question).strip()
+        if self.retriever is not None and self.gpt and history:
+            from backend.generation import rewrite
+            try:
+                query = redact(rewrite(question, history))
+                context = 'rewritten'
+            except Exception:
+                pass  # deterministic follow-up query is retained, no fabricated context
         matches = self.search(query)
         sentences = []
         generation = 'extractive'
         warning = None
-        if self.gpt and matches:
+        if self.gpt and matches and self.retriever is not None:
+            from backend.generation import generate
+            try:
+                sentences = generate(query, matches)
+                generation = 'langchain-gpt-reviewed'
+            except Exception:
+                warning = '문장별 인용 또는 근거 검증 실패로 원문 발췌를 제공합니다.'
+        if self.gpt and matches and self.retriever is None:
             try:
                 data = self.openai('chat/completions', {
                     'model': os.getenv('CHAT_MODEL', 'gpt-4o-mini'), 'temperature': 0,
@@ -188,14 +206,21 @@ class Engine:
                   'sources': [d for d in matches if d['id'] in used],
                   'message': '관련 원문입니다. 질문에 대한 결론이나 적용 여부를 보장하지 않습니다.' if sentences else '확인 가능한 근거가 부족합니다. 구체적인 사실관계나 다른 검색어를 입력하고 전문가에게 확인하세요.',
                   'disclaimer': DISCLAIMER, 'generation': generation, 'warning': warning,
-                  'demo': any(d['kind'] == 'demo' for d in matches) or all(d['kind'] == 'demo' for d in self.docs),
-                  'retrieval': 'bm25+openai-cosine-rrf' if self.embeddings else 'bm25+lexical-cosine-rrf', 'context_used': bool(context)}
+                  'demo': self.retriever is None,
+                  'corpus': self.retriever.config if self.retriever is not None else {'name':'synthetic-demo'},
+                  'retrieval': 'elasticsearch-nori-bm25+chroma-semantic' if self.retriever is not None else ('bm25+openai-cosine-rrf' if self.embeddings else 'bm25+lexical-cosine-rrf'), 'context_used': bool(context)}
         with self.db() as db:
             db.execute('INSERT INTO turns VALUES (?,?,?)', (token, question, json.dumps(result, ensure_ascii=False)))
         return result
 
 
-def create_app(documents=None, db_path=None, api_key=None, embeddings=None, gpt=None):
+def create_app(documents=None, db_path=None, api_key=None, embeddings=None, gpt=None, retrieval_backend=None):
+    retrieval_backend = retrieval_backend or os.getenv('RETRIEVAL_BACKEND','elastic_chroma')
+    if retrieval_backend not in {'elastic_chroma','demo'}:
+        raise ValueError('Unknown retrieval backend')
+    retriever = HybridRetriever() if retrieval_backend == 'elastic_chroma' else None
+    if retriever is not None:
+        documents = []
     if documents is None:
         data_path = Path(os.getenv('LEGAL_DATA_PATH', str(ROOT/'data/demo.json')))
         documents = json.loads(data_path.read_text())
@@ -203,7 +228,7 @@ def create_app(documents=None, db_path=None, api_key=None, embeddings=None, gpt=
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     engine = Engine(documents, db_path, os.getenv('OPENAI_API_KEY', '') if api_key is None else api_key,
                     os.getenv('USE_EMBEDDINGS', '0') == '1' if embeddings is None else embeddings,
-                    os.getenv('USE_GPT', '0') == '1' if gpt is None else gpt)
+                    os.getenv('USE_GPT', '1') == '1' if gpt is None else gpt, retriever=retriever)
     app = FastAPI(title='진흥 법률 근거 찾기', version='0.1.0')
     app.state.engine = engine
 
@@ -217,7 +242,7 @@ def create_app(documents=None, db_path=None, api_key=None, embeddings=None, gpt=
 
     @app.get('/api/health')
     def health():
-        return {'status': 'ok', 'documents': len(engine.docs), 'demo': any(d['kind'] == 'demo' for d in engine.docs)}
+        return {'status': 'ok', 'documents': engine.retriever.config['count'] if engine.retriever else len(engine.docs), 'demo': engine.retriever is None}
 
     @app.post('/api/sessions', status_code=201)
     def session():
@@ -238,8 +263,8 @@ def create_app(documents=None, db_path=None, api_key=None, embeddings=None, gpt=
     def message(token: str, body: Question):
         try:
             return engine.answer(token, body.question)
-        except httpx.HTTPError:
-            raise HTTPException(503, '외부 검색 모델 연결 실패입니다. 잠시 후 다시 시도하세요.') from None
+        except (httpx.HTTPError, RetrievalUnavailable):
+            raise HTTPException(503, '검색 서비스 또는 외부 모델 연결 실패입니다. 데모 검색으로 대체하지 않습니다.') from None
 
     static = ROOT/'frontend/dist'
     if static.exists():
