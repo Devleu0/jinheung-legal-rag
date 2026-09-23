@@ -2,6 +2,8 @@
 
 지역 주민을 위한 RAG 법률 정보 캡스톤 연구 시스템입니다. **원래 계획의 Elasticsearch + Chroma + LangChain/GPT 구성**을 기본 경로로 복원했습니다. 법률 자문 서비스나 완성된 상용 제품은 아닙니다.
 
+처음 사용하는 분은 **[쉬운 사용자 안내서](docs/USER_GUIDE.md)**에서 기능·동작 방식·화면 사용법·문제 해결을 확인하세요.
+
 ## 현재 구현
 
 - FastAPI REST API, SQLite 세션/대화 저장, 24시간 TTL, 삭제 API
