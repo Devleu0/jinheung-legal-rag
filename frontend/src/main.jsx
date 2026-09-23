@@ -22,7 +22,7 @@ function App(){
       await api('/sessions/'+id+'/messages',{method:'POST',body:JSON.stringify({question})});
       // Read back redacted questions; never persist raw user text in browser storage.
       const h=await api('/sessions/'+id);setTurns(h.turns);setQuestion('');
-    } catch(e){if(e.status===404){setSession(null);sessionStorage.removeItemListener?.('legal-session');sessionStorage.removeItem('legal-session');}setError(e.message);} finally{setBusy(false);}
+    } catch(e){if(e.status===404){setSession(null);sessionStorage.removeItem('legal-session');}setError(e.message);} finally{setBusy(false);}
   }
   async function clear(){
     setBusy(true);setError('');
@@ -37,7 +37,7 @@ function App(){
     {error&&<p role="alert" className="error">{error}</p>}
     <form onSubmit={send}><label htmlFor="question">법률 정보 질문</label><textarea id="question" value={question} maxLength={1500} minLength={2} required onChange={e=>setQuestion(e.target.value)} placeholder="어떤 상황인지 개인정보 없이 알려주세요." disabled={busy}/><div className="form-bottom"><small>{question.length}/1500 · 후속 질문은 ‘그럼…’으로 시작하세요.</small><button type="submit" disabled={busy||question.trim().length<2}>{busy?'근거 확인 중…':'근거 찾기 →'}</button></div></form>
     <footer>긴급 위험 상황은 112·119, 법률 상담은 대한법률구조공단 132에 문의하세요.</footer>
-    {source&&<dialog open aria-labelledby="source-title"><button autoFocus onClick={()=>setSource(null)}>닫기</button><h2 id="source-title">{source.title}</h2><p>{source.locator}</p><h3>이 문장의 인용 근거</h3><blockquote>{source.evidence_quote}</blockquote><h3>근거 문맥</h3><p>{source.text}</p><small>{source.kind==='demo'?'시연 자료 작성일':'시행일'}: {source.effective_date} / 수집일: {source.retrieved_at}</small><p><a href={source.url} target="_blank" rel="noopener noreferrer">공식 원문 확인 ↗</a></p><small>인용 검사는 문자열 일치만 보장합니다. 법적 적용과 최신성을 보장하지 않습니다.</small></dialog>}
+    {source&&<dialog open aria-labelledby="source-title"><button autoFocus onClick={()=>setSource(null)}>닫기</button><h2 id="source-title">{source.title}</h2><p>{source.locator}</p><h3>이 문장의 인용 근거</h3><blockquote>{source.evidence_quote}</blockquote><h3>근거 문맥</h3><p>{source.text}</p><small>{source.kind==='demo'?'시연 자료 작성일':source.kind==='case'?'선고일':'시행일'}: {source.effective_date} / 수집일: {source.retrieved_at}</small><p><a href={source.url} target="_blank" rel="noopener noreferrer">공식 원문 확인 ↗</a></p><small>인용 검사는 문자열 일치만 보장합니다. 법적 적용과 최신성을 보장하지 않습니다.</small></dialog>}
   </main>;
 }
 createRoot(document.getElementById('root')).render(<App/>);

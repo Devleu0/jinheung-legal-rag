@@ -10,9 +10,10 @@ import httpx
 
 def download(manifest, out, limit=100, interval=1.0):
     out.mkdir(parents=True,exist_ok=True)
-    with httpx.Client(timeout=60,follow_redirects=False) as client:
-        for i,line in enumerate(manifest.read_text().splitlines()):
-            if i>=limit:break
+    downloaded=0
+    with httpx.Client(timeout=60,follow_redirects=False) as client, manifest.open(encoding='utf-8') as rows:
+        for line in rows:
+            if downloaded>=limit:break
             item=json.loads(line);url=item['url'];p=urlparse(url)
             if p.scheme!='https' or p.hostname not in {'www.law.go.kr','law.go.kr'} or p.username or p.password or p.path!='/LSW/flDownload.do':
                 raise ValueError('Unsafe attachment URL')
@@ -33,6 +34,7 @@ def download(manifest, out, limit=100, interval=1.0):
                 if not size:raise ValueError('Empty attachment')
                 temp.replace(out/(name+'.bin'))
                 (out/(name+'.json')).write_text(json.dumps(dict(item,bytes=size,sha256=h.hexdigest(),status='downloaded'),ensure_ascii=False))
+                downloaded+=1
             finally:
                 temp.unlink(missing_ok=True)
 
