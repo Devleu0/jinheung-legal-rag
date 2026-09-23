@@ -4,7 +4,7 @@ import './style.css';
 
 async function api(path, options={}) {
   const r = await fetch('/api'+path, {headers:{'Content-Type':'application/json'}, ...options});
-  if (!r.ok) {const e=await r.json().catch(()=>({})); throw new Error(typeof e.detail==='string'? e.detail : '요청을 처리하지 못했습니다. 입력과 서버 연결을 확인하세요.');}
+  if (!r.ok) {const e=await r.json().catch(()=>({})); const error=new Error(typeof e.detail==='string'? e.detail : '요청을 처리하지 못했습니다. 입력과 서버 연결을 확인하세요.'); error.status=r.status; throw error;}
   return r.status===204 ? null : r.json();
 }
 function App(){
@@ -22,16 +22,16 @@ function App(){
       await api('/sessions/'+id+'/messages',{method:'POST',body:JSON.stringify({question})});
       // Read back redacted questions; never persist raw user text in browser storage.
       const h=await api('/sessions/'+id);setTurns(h.turns);setQuestion('');
-    } catch(e){setError(e.message);} finally{setBusy(false);}
+    } catch(e){if(e.status===404){setSession(null);sessionStorage.removeItem('legal-session');}setError(e.message);} finally{setBusy(false);}
   }
   async function clear(){
     setBusy(true);setError('');
-    try{if(session)await api('/sessions/'+session,{method:'DELETE'});setSession(null);sessionStorage.removeItem('legal-session');setTurns([]);setSource(null);}
+    try{if(session)await api('/sessions/'+session,{method:'DELETE'}).catch(e=>{if(e.status!==404)throw e;});setSession(null);sessionStorage.removeItem('legal-session');setTurns([]);setSource(null);}
     catch(e){setError(e.message);}finally{setBusy(false);}
   }
   return <main><header><span className="brand">진흥 / LEGAL EVIDENCE</span><button onClick={clear} disabled={busy}>대화 삭제</button></header>
     <section className="intro"><span className="eyebrow">지역 주민을 위한 캡스톤 프로젝트</span><h1>법률 정보,<br/>근거부터 확인하세요.</h1><p>질문과 관련된 원문을 찾고, 출처를 함께 읽어보세요.</p></section>
-    <aside className="notice">학습용 MVP · 법률 자문이 아닙니다. 기본 데이터는 가상 시연 자료입니다. 이름·주소·주민번호 등 개인정보를 입력하지 마세요. 대화는 서버에 최대 24시간 보관됩니다.</aside>
+    <aside className="notice">학습용 MVP · 법률 자문이 아닙니다. 기본 데이터는 가상 시연 자료입니다. 이름·주소·주민번호 등 개인정보를 입력하지 마세요. 대화 접근은 24시간 후 만료되고, 서버의 다음 세션 요청 때 삭제됩니다.</aside>
     {!turns.length&&<section className="examples" aria-label="예시 질문">{['근로계약 임금 관련 내용을 찾고 싶어요','층간소음 분쟁은 어디서 확인하나요?','임대차 보증금 반환 자료를 찾아주세요'].map(q=><button key={q} onClick={()=>setQuestion(q)}>{q} ↗</button>)}</section>}
     <section className="conversation" aria-live="polite">{turns.map((t,i)=><article key={i}><h2>Q. {t.question}</h2><div className="answer"><div className="badge">{t.answer.demo?'가상 시연 자료 · 실제 법적 근거 아님':'법률 원문 검색'} / {t.answer.generation}</div><p>{t.answer.message}</p>{t.answer.sentences.map((s,j)=><p className="quote" key={j}>{s.text} <button className="citation" aria-label={`근거 ${j+1} 보기`} onClick={()=>setSource(t.answer.sources.find(d=>d.id===s.source_id))}>[{j+1}]</button></p>)}{t.answer.warning&&<p>{t.answer.warning}</p>}<small>{t.answer.disclaimer}</small></div></article>)}</section>
     {error&&<p role="alert" className="error">{error}</p>}

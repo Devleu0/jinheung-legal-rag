@@ -11,10 +11,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - run: python -m pytest -q
-      - run: python scripts/evaluate.py
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: npm install && npm run build
         working-directory: frontend
+      - run: python -m pytest -q
+      - run: python scripts/evaluate.py
