@@ -8,7 +8,7 @@
 
 - FastAPI REST API, SQLite 세션/대화 저장, 24시간 TTL, 삭제 API
 - Elasticsearch Nori/BM25 + Chroma 의미 임베딩 + RRF 실제 어댑터 및 버전별 색인
-- LangChain GPT 문장 생성·별도 근거 검토·후속 질의 재작성
+- OpenAI/Gemini 선택 UI, LangChain 문장 생성·별도 근거 검토·후속 질의 재작성
 - 문장별 출처 ID 및 정확한 인용 구절, 검증 실패 시 원문 발췌
 - 공식 명세 기반 법령/판례 수집 CLI, 재개·raw checksum·JSONL·첨부 다운로드
 - 연구 변형: 질의 적응 가중치 + 양쪽 검색 합의 + 조문 다양성, 5개 비교군 평가 도구
@@ -46,6 +46,29 @@ python scripts/evaluate.py
 ```
 
 키 없는 UI 시연만 하려면 `requirements.txt` 설치 후 `.env`에서 `RETRIEVAL_BACKEND=demo`, `USE_GPT=0`을 명시하세요. 이 경로는 실제 의미 검색/법적 근거의 대체물이 아닙니다.
+
+## Gemini / OpenAI 선택
+
+`.env`에서 서버 측 키와 기본 모델을 설정하고 서버를 재시작합니다.
+
+```dotenv
+USE_GPT=1
+CHAT_PROVIDER=gemini
+GEMINI_API_KEY=your-google-ai-studio-api-key
+GEMINI_CHAT_MODEL=gemini-2.5-flash
+# OpenAI도 화면에서 선택하려면 설정
+OPENAI_API_KEY=your-openai-api-key
+CHAT_MODEL=gpt-4o-mini
+```
+
+- 질문 입력창 위 **AI 모델**에서 키가 설정된 제공자를 선택합니다. 선택은 요청별로 적용되며 기존 대화가 유지됩니다.
+- `GET /api/models`는 모델 이름과 사용 가능 여부만 반환합니다. 키는 브라우저에 전달하지 않습니다.
+- 메시지 API의 선택 필드는 `provider: "openai"` 또는 `"gemini"`입니다. 생략하면 `CHAT_PROVIDER`를 사용합니다. 미설정 제공자를 지정하면 400, 잘못된 값은 422입니다.
+- Gemini는 Google의 OpenAI 호환 API를 사용합니다. 추가 SDK 없이 기존 `langchain-openai`를 사용하며, 생성·근거 재검토·후속 질의 재작성에 같은 제공자를 적용합니다.
+- **임베딩은 변경하지 않습니다.** 실제 `elastic_chroma` 검색은 Gemini를 선택해도 OpenAI 키가 필요합니다. Gemini 키만으로 시연하려면 `RETRIEVAL_BACKEND=demo`, `USE_EMBEDDINGS=0`을 설정하세요. 자료는 가상입니다.
+- `USE_GPT=0`이면 두 제공자 모두 비활성화되고 기존 원문 발췌 모드를 사용합니다.
+- 선택한 제공자에게 질문·선택된 근거·최근 후속 대화가 전송될 수 있습니다. 모델 응답/인용 검증 실패 시 원문 발췌로 전환하며 다른 제공자에게 자동 전송하지 않습니다.
+- `GEMINI_CHAT_MODEL`은 계정에서 지원하는 모델 ID로 변경할 수 있습니다. 오프라인 테스트는 실 API의 모델 가용성·결제·법률 정확도를 검증하지 않습니다.
 
 ## 먼저 읽을 문서
 
